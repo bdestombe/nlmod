@@ -71,8 +71,8 @@ def lake_from_gdf(
             lakeno : with the number of the lake
             strt : with the starting head of the lake
             clake : with the bed resistance of the lake
-        A lake may have multiple rows (polygon pieces) per cellid, e.g. straight
-        from nlmod.grid.gdf_to_grid. Pieces are combined into one lake-GWF
+        A single lake may have multiple elements (polygon pieces) in one cell, e.g.
+        straight from nlmod.grid.gdf_to_grid. Pieces are combined into one lake-GWF
         connection per cell with an area-weighted bed resistance (see
         _aggregate_connections_per_cell), like nlmod.gwf.surface_water.aggregate
         already does for RIV/DRN celldata.
@@ -435,8 +435,8 @@ def _aggregate_connections_per_cell(lake_gdf, ds):
     """
     if "geometry" not in lake_gdf.columns or lake_gdf.geometry.isna().any():
         raise ValueError(
-            "found multiple rows per cell for one lake; provide polygon "
-            "geometries so the pieces can be area-weighted into one connection"
+            "found multiple elements of one lake in a single cell; provide polygon "
+            "geometries of the lake to aggregate these elements"
         )
     cond = (lake_gdf.geometry.area / lake_gdf["clake"]).groupby(level=0).sum()
     agg = lake_gdf.groupby(level=0).first()

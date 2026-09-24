@@ -32,6 +32,22 @@ logger = logging.getLogger(__name__)
 
 
 def surface_water(model_ds, ax=None, **kwargs):
+    """Plot surface water from model dataset.
+
+    Parameters
+    ----------
+    model_ds : xarray.Dataset
+        Model dataset containing surface water data.
+    ax : matplotlib Axes, optional
+        Axes to plot on. The default is None.
+    **kwargs : dict
+        Additional keyword arguments passed to GeoDataFrame.plot.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+        Axes with surface water plotted.
+    """
     surf_water = rws.get_gdf_surface_water(model_ds)
 
     if ax is None:
@@ -42,6 +58,24 @@ def surface_water(model_ds, ax=None, **kwargs):
 
 
 def modelgrid(ds, ax=None, rotated=False, **kwargs):
+    """Plot model grid from dataset.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset
+        Model dataset.
+    ax : matplotlib Axes, optional
+        Axes to plot on. The default is None.
+    rotated : bool, optional
+        Whether the grid is rotated. The default is False.
+    **kwargs : dict
+        Additional keyword arguments passed to modelgrid.plot.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+        Axes with model grid plotted.
+    """
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 10))
         ax.set_aspect("auto")
@@ -101,6 +135,9 @@ def facet_plot(
     cmap="turbo",
     rotated=True,
     figsize=(10, 10),
+    layout=None,
+    show_titles=True,
+    show_ticks=True,
     base=10_000,
     fmt_base=1_000,
     fmt="{:.0f}",
@@ -127,6 +164,14 @@ def facet_plot(
         The default is True, which plots the data in local coordinates.
     figsize : tuple, optional
         The size of the figure in inches. Default is (10, 10).
+    layout : str or None, optional
+        Matplotlib subplot layout mode passed to get_map. The default is None,
+        which avoids the overhead of constrained layout during batch rendering.
+    show_titles : bool, optional
+        When True, draw a title inside each facet. Default is True.
+    show_ticks : bool, optional
+        When True, draw axis ticks using base and fmt_base. Set to False for
+        faster batch rendering. Default is True.
     base : int, optional
         The base for the axis tick formatting. Default is 1,000.
     fmt_base : int, optional
@@ -142,13 +187,20 @@ def facet_plot(
     axes : numpy.ndarray
         An array of matplotlib.axes.Axes objects corresponding to each layer plotted.
     """
+    if isinstance(da, str):
+        da = ds[da]
+
     if selection is None:
         selection = da[dim].values
 
-    ndim = np.sqrt(len(selection))
+    nselection = len(selection)
+    if nselection == 0:
+        raise ValueError("selection must contain at least one value")
+
+    ndim = np.sqrt(nselection)
     nrows = np.floor(ndim).astype(int)
     ncols = np.ceil(ndim).astype(int)
-    if nrows * ncols < len(selection):
+    if nrows * ncols < nselection:
         nrows += 1
 
     f, axes = get_map(
@@ -158,25 +210,33 @@ def facet_plot(
         ncols=ncols,
         sharex=True,
         sharey=True,
-        base=base,
+        base=base if show_ticks else None,
         fmt_base=fmt_base,
         fmt=fmt,
+        layout=layout,
     )
-    if isinstance(da, str):
-        da = ds[da]
+
+    plot_ds = ds
+    if "icell2d" in da.dims:
+        plot_ds = get_patches(ds, rotated=rotated)
 
     qm = None  # please linter
     for i, isel in enumerate(selection):
         iax = axes.flat[i] if isinstance(axes, np.ndarray) else axes
-        if i < len(selection):
-            qm = data_array(
-                da.loc[{dim: isel}], ds, ax=iax, cmap=cmap, rotated=rotated, **kwargs
-            )
+        qm = data_array(
+            da.loc[{dim: isel}],
+            plot_ds,
+            ax=iax,
+            cmap=cmap,
+            rotated=rotated,
+            **kwargs,
+        )
+        if show_titles:
             if isinstance(isel, np.datetime64):
                 isel = pd.Timestamp(isel)
             title_inside(f"{isel}", ax=iax)
     if isinstance(axes, np.ndarray):
-        for j in range(i + 1, len(axes.flat)):
+        for j in range(nselection, len(axes.flat)):
             axes.flat[j].set_visible(False)
     if qm is not None and colorbar:
         cbar = f.colorbar(qm, ax=axes)
@@ -593,6 +653,66 @@ def map_array(
     animate=False,
     **kwargs,
 ):
+    """Plot a map of a data array from a model dataset.
+
+    Parameters
+    ----------
+    da : str, xr.DataArray, or np.ndarray
+        Data array or variable name to plot.
+    ds : xarray.Dataset
+        Model dataset.
+    ilay : int, optional
+        Layer index to plot. The default is 0.
+    iper : int, optional
+        Stress period index to plot. The default is 0.
+    extent : tuple, optional
+        Extent for the plot. The default is None.
+    ax : matplotlib Axes, optional
+        Axes to plot on. The default is None.
+    title : str, optional
+        Plot title. The default is "".
+    xlabel : str, optional
+        X-axis label. The default is "X [km RD]".
+    ylabel : str, optional
+        Y-axis label. The default is "Y [km RD]".
+    date_fmt : str, optional
+        Date format string. The default is "%Y-%m-%d".
+    norm : matplotlib.colors.Normalize, optional
+        Color normalization. The default is None.
+    vmin : float, optional
+        Minimum value for color scale. The default is None.
+    vmax : float, optional
+        Maximum value for color scale. The default is None.
+    levels : list, optional
+        Contour levels. The default is None.
+    cmap : str, optional
+        Colormap name. The default is "viridis".
+    alpha : float, optional
+        Transparency. The default is 1.0.
+    colorbar : bool, optional
+        Show colorbar. The default is True.
+    colorbar_label : str, optional
+        Colorbar label. The default is "".
+    plot_grid : bool, optional
+        Plot grid. The default is True.
+    rotated : bool, optional
+        Whether the grid is rotated. The default is False.
+    add_to_plot : callable, optional
+        Function to add additional elements to the plot. The default is None.
+    background : bool, optional
+        Use background. The default is False.
+    figsize : tuple, optional
+        Figure size. The default is None.
+    animate : bool, optional
+        Animate the plot. The default is False.
+    **kwargs : dict
+        Additional keyword arguments passed to matplotlib imshow.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+        Axes with the array plotted.
+    """
     # get data
     if isinstance(da, str):
         da = ds[da]
@@ -908,7 +1028,8 @@ def get_ahn_colormap(name="ahn", N=256):
     Notes
     -----
     The color progression is as follows:
-    dark blue → medium blue → light blue → dark green → light green → yellow → orange → light red → dark red
+    dark blue → medium blue → light blue → dark green → light green →
+    yellow → orange → light red → dark red
     """
     colors = np.array(
         [
